@@ -1,0 +1,313 @@
+---
+title: 'DS-UA 201: Problem Set 4'
+author: "Vanessa (Ziwei) Xu"
+date: "December 8, 2020"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Useful R packages
+library(tidyverse)
+library(haven)
+library(estimatr)
+library(Matching)
+library(ggplot2)
+```
+
+> This problem set is due at **11:59 pm on Tuesday, December 8th**. The data are on the course website. 
+
+> Please upload your solutions as a .pdf file saved as `Yourlastname_Yourfirstinitial_pset4.pdf`). In addition, an electronic copy of your .Rmd file (saved as `Yourlastname_Yourfirstinitial_pset4.Rmd`) must be submitted to the course website at the same time. We should be able to run your code without error messages. Please note on your problem set if you collaborated with another student and, if so, whom. In order to receive credit, homework submissions must be substantially started and all work must be shown. Late assignments will not be accepted.
+
+
+# Problem 1
+  
+Despite heated political and media rhetoric, there are few causal estimates of the effect of expanded healthcare insurance on healthcare outcomes. One landmark study, the [Oregon Health Insurance Experiment](https://www.ncbi.nlm.nih.gov/pubmed/23635051), covered new ground by utilizing a randomized control trial implemented by the state government of Oregon. To allocate a limited number of eligible coverage slots for the state's Medicaid expansion, about 30,000 low-income, uninsured adults (out of about 90,000 wait-list applicants) were randomly selected by lottery to be allowed to apply for Medicaid coverage. Researchers collected observable measures of health (blood pressure, cholesterol, and blood sugar levels), as well as hospital visitation and healthcare expenses for 6,387 selected adults and 5,842 not selected adults. 
+
+For this problem, you will need the `OHIE.dta` file. The code below will load this dataset
+
+```{r}
+ohie <- read_dta("OHIE.dta")
+ohie
+```
+
+The variables you will need are:
+  
+`treatment` - Selected in the lottery 
+
+`ohp_all_ever_admin` -  Ever enrolled in Medicaid from matched notification date to September 30, 2009 (actually "took" the treatment)
+
+`tab2bp_hyper` - Outcome: Binary indicator for elevated blood pressure (defined a systolic pressure of 140mm Hg or more and a diastolic pressure of 90mm Hg or more)
+
+`tab2phqtot_high` - Outcome: Binary indicator for a positive screening result for depression (defined as a score of 10 or higher\ on the Patient Health Questionaire - 8)
+
+`tab4_catastrophic_exp_inp` - Outcome: Indicator for catastrophic medical expenditure (total out-of-pocket medical expenses $\geq$ 30\% of household income)
+
+`tab5_needmet_med_inp` - Outcome: Participant feels that they received all needed medical care in past 12 months (binary indicator)
+
+## Question A
+
+Estimate the intent-to-treat effects of assignment to treatment (being eligible to apply) on each of the four outcomes (elevated blood pressure, depression, catastrophic medical expenditure, and whether respondents had their health care needs met). Provide 95\% confidence intervals for each estimate and interpret your results.
+
+******
+```{r}
+# filter out n/a results
+ohie_1 <- subset(ohie, tab2bp_hyper == 1 | tab2bp_hyper == 0)
+# fit the regression model
+lm_robust(tab2bp_hyper ~ treatment, data = ohie_1)
+
+# filter out n/a results
+ohie_2 <- subset(ohie, tab2phqtot_high == 1 | tab2phqtot_high == 0)
+# fit the regression model
+lm_robust(tab2phqtot_high ~ treatment, data = ohie_2)
+
+# filter out n/a results
+ohie_4 <- subset(ohie, tab4_catastrophic_exp_inp == 1 | tab4_catastrophic_exp_inp == 0)
+# fit the regression model
+lm_robust(tab4_catastrophic_exp_inp ~ treatment, data = ohie_4)
+
+# filter out n/a results
+ohie_5 <- subset(ohie, tab5_needmet_med_inp == 1 | tab5_needmet_med_inp == 0)
+# fit the regression model
+lm_robust(tab5_needmet_med_inp ~ treatment, data = ohie_5)
+```
+The estimate of intent-to-treat effects of assignment to treatment on elevated blood pressure is -0.002; and the 95\% confidence intervals is [-0.015, 0.011]. We would fail to reject the null of no treatment effect. 
+
+The estimate of intent-to-treat effects of assignment to treatment on depression is -0.035; and the 95\% confidence intervals is [-0.051, -0.019]. We would reject the null of no treatment effect. 
+ 
+The estimate of intent-to-treat effects of assignment to treatment on catastrophic medical expenditure is -0.015; and the 95\% confidence intervals is [-0.023, -0.008]. We would reject the null of no treatment effect. 
+ 
+The estimate of intent-to-treat effects of assignment to treatment on whether respondents had their health care needs met is 0.034; and the 95\% confidence intervals is [0.017, 0.052]. We would reject the null of no treatment effect. 
+
+******
+
+## Question B
+
+Suppose that researchers actually wanted to estimate the effect of Medicaid enrollment on each of the four outcomes. Suppose they first used a naive regression of each of the the outcomes on the indicator of Medicaid enrollment. Report 95\% confidence intervals for each of your estimates and interpret your results. Why might these be biased estimates for the causal effect of Medicaid enrollment?
+
+******
+```{r}
+lm_robust(tab2bp_hyper ~ ohp_all_ever_admin, data = ohie_1)
+lm_robust(tab2phqtot_high ~ ohp_all_ever_admin, data = ohie_2)
+lm_robust(tab4_catastrophic_exp_inp ~ ohp_all_ever_admin, data = ohie_4)
+lm_robust(tab5_needmet_med_inp ~ ohp_all_ever_admin, data = ohie_5)
+```
+The estimate of the effect of Medicaid enrollment on elevated blood pressure is -0.018; and the 95\% confidence intervals is [-0.032, -0.004]. We would reject the null of no treatment effect. 
+
+The estimate of the effect of Medicaid enrollment on depression is 0.049; and the 95\% confidence intervals is [0.031, 0.067]. We would reject the null of no treatment effect. 
+ 
+The estimate of the effect of Medicaid enrollment on catastrophic medical expenditure is -0.011; and the 95\% confidence intervals is [-0.019, -0.003]. We would reject the null of no treatment effect. 
+ 
+The estimate of the effect of Medicaid enrollment on whether respondents had their health care needs met is 0.061; and the 95\% confidence intervals is [0.043, 0.080]. We would reject the null of no treatment effect. 
+
+However, these are biased estimates because randomization is broken by non-compliance.
+
+******
+
+## Question C
+
+Suppose we were to use assignment to treatment as an instrument for actually receiving Medicaid coverage.
+
+Consider that not everyone who was selected to apply for Medicaid actually ended up applying and receiving coverage. Likewise, some applicants who were not selected to receive the treatment nevertheless were eventually covered. What were the compliance rates (the level of Medicaid enrollment) for subjects who were selected and subjects who were not selected? Use a "first stage" regression to estimate the effect of being selected on Medicaid enrollment to estimate the compliance rates. Is the instrument of assignment-to-treatment a strong instrument for actual Medicaid enrollment?
+
+******
+```{r}
+lm_robust(ohp_all_ever_admin ~ treatment, data = ohie)
+```
+The instrument of assignment-to-treatment is a very strong instrument for actual Medicaid enrollment. 
+
+******
+
+## Question D
+
+Discuss whether the exclusion restriction holds in this design.
+
+******
+```{r}
+cov(ohie_1$tab2bp_hyper, ohie_1$treatment)
+cov(ohie_2$tab2phqtot_high, ohie_2$treatment)
+cov(ohie_4$tab4_catastrophic_exp_inp, ohie_4$treatment)
+cov(ohie_5$tab5_needmet_med_inp, ohie_5$treatment)
+```
+Exclusion restriction holds such that the instrument affects the outcome Y only through the channel X but not directly. The covariance are close to 0 but not exactly. I would argue that exclusion restriction holds at some degree since there are finite number of observations but in theory they do no hold.
+
+******
+
+## Question E
+
+Now estimate the effect of Medicaid enrollment on each of the four outcomes using two-stage least squares estimators. Report 95\% confidence intervals for your estimates and interpret your results. Compare the estimates to those you obtained in Question C.
+
+******
+```{r}
+iv_robust(tab2bp_hyper ~ ohp_all_ever_admin | treatment, data = ohie_1)
+iv_robust(tab2phqtot_high ~ ohp_all_ever_admin | treatment, data = ohie_2)
+iv_robust(tab4_catastrophic_exp_inp ~ ohp_all_ever_admin | treatment, data = ohie_4)
+iv_robust(tab5_needmet_med_inp ~ ohp_all_ever_admin | treatment, data = ohie_5)
+```
+The estimate of the effect of Medicaid enrollment on elevated blood pressure is -0.006; and the 95\% confidence intervals is [-0.057, 0.045]. We would fail to reject the null of no treatment effect. 
+
+The estimate of the effect of Medicaid enrollment on depression is -0.138; and the 95\% confidence intervals is [-0.202, -0.073]. We would reject the null of no treatment effect. 
+ 
+The estimate of the effect of Medicaid enrollment on catastrophic medical expenditure is -0.060; and the 95\% confidence intervals is [-0.091, -0.030]. We would reject the null of no treatment effect. 
+ 
+The estimate of the effect of Medicaid enrollment on whether respondents had their health care needs met is 0.135; and the 95\% confidence intervals is [0.068, 0.203]. We would reject the null of no treatment effect. 
+
+Compared to the results from Question C, the estimates are significantly lower.
+******
+
+## Question F
+
+What additional assumptions do you have to make in order to interpret your estimates from Question E as Average Treatment Effects for the entire sample?
+
+******
+
+Apart from exclusion restriction, other assumptions needed in order to interpret estimates from Question E as Average Treatment Effects for the entire sample are randomization of instrument, first-stage relationship, and monotonicity. Z has to have an effect on D, but it should only go in one direction at the individual level. Z should also be independent of both sets of potential outcomes as well. 
+
+******
+
+# Problem 2
+
+In this problem, we will return to the Card and Krueger (1994) minimum wage study, which used the change in minimum wage laws in New Jersey relative to neighboring Pennsylvania in order to estimate the effect of minimum wage increases on employment via a difference-in-differences design.The full citation to the paper is 
+
+\begin{quote}
+Card, David, and Alan B. Krueger. "Minimum Wages and Employment: A Case Study of the Fast-Food Industry in New Jersey and Pennsylvania." The American Economic Review 84.4 (1994): 772-793.
+\end{quote}
+
+This problem will look at the effect of the minimum wage increases on observed wages paid. You will be using the `minwage.csv` dataset for this problem. Below is the code to load the data into R
+
+```{r, echo=T, warning=F, message=F, results="hide"}
+# Load the data for Card and Krueger (1994)
+minwage <- read_csv("minwage.csv")
+```
+
+
+Card and Krueger conducted a survey of fast food restaurants in New Jersey and eastern Pennsylvania in two waves. The first wave was conducted in February/March 1992, about a month prior to the minimum wage increase in New Jersey. The second wave was conducted in November/December of 1992, about 8 months after the minimum wage increase in New Jersey. Each survey wave asked a similar set of questions about the characteristics of the restaurant (employment, starting wages, etc..). Prior to the April, 1992 increase, the minimum wage in both Pennsylvania and New Jersey was the federal minimum of \$4.25 per hour. After April 1992, New Jersey's minimum wage was raised by state law to \$5.05 per hour while Pennsylvania's remained at \$4.25.
+
+The relevant variables you may need are
+
+- `STATE`: Treatment indicator: 1 if New Jersey, 0 if Pennsylvania
+- `CHAIN`: Fast food franchise (categorical):  1=Burger King; 2=KFC; 3=Roy Rogers; 4=Wendy's
+
+- `EMPFT`: Number of full-time employees (first survey wave)
+- `WAGE_ST`: Starting wage (dollars per hour) (first survey wave)
+- `PSODA`: Price of a medium soda (first survey wave)
+- `PFRY`: Price of small fries (first survey wave)
+- `PENTREE`: Price of an entree (first survey wave)
+
+- `EMPFT2`: Number of full-time employees (second survey wave)
+- `WAGE_ST2`: Starting wage (dollars per hour) (second survey wave)
+- `PSODA2`: Price of a medium soda (second survey wave)
+- `PFRY2`: Price of small fries (second survey wave)
+- `PENTREE2`: Price of an entree (second survey wave)
+
+
+## Question A
+
+Using the difference-in-differences estimator, estimate the effect of New Jersey's minimum wage increase on starting wages (in dollars per hour). Provide a 95\% confidence interval and interpret your results
+
+******
+```{r}
+# drop unites with n/a results
+minwage2 <- subset(minwage, !is.na(WAGE_ST) & !is.na(WAGE_ST2) & !is.na(EMPFT) & !is.na(EMPFT2))
+
+# Create a variable for change in starting wages
+minwage2$CHANGE <- minwage2$WAGE_ST2 - minwage2$WAGE_ST
+
+# get the DiD estimate
+lm_robust(CHANGE ~ STATE, data = minwage2)
+```
+The estimate of the effect of New Jersey's minimum wage increase on starting wage is 0.510 dollars per hour; and the 95\% confidence intervals is [0.409, 0.610]. We would reject the null of no treatment effect. 
+
+******
+
+## Question B
+
+Suppose we were just interested in estimating the effect of the minimum wage increase only on those restaurants in New Jersey that were paying minimum wage as their starting wage prior to the increase. Using a difference-in-differences estimator and including all Pennsylvania restaurants as the control group, estimate the effect of the minimum wage increase on starting wages in New Jersey restaurants that were paying the minimum wage (\$4.25 per hour) as their starting wage prior to the law. Provide a 95\% confidence interval and compare your result to the result in Question 1. Discuss why the two might differ. 
+
+******
+```{r}
+# drop all observations where restaurants in New Jersey weren't paying minimum wage as their starting wage prior to the increase
+minwage3 <- minwage2[!(minwage2$WAGE_ST != 4.25 & minwage2$STATE == 1),]
+minwage3$CHANGE <- minwage3$WAGE_ST2 - minwage3$WAGE_ST
+
+# get the DiD estimate
+lm_robust(CHANGE ~ STATE, data = minwage3)
+```
+The estimate of the effect is 0.846 dollars per hour; and the 95\% confidence intervals is [0.753, 0.939]. We would reject the null of no treatment effect. The estimate is larger than from Question A probably because there is more room for starting wage to be raised for the restaurants in New Jersey that were paying minimum wage as their starting wage prior to the increase. And we also exclude restaurants that were already paying above the new minimum wage as well. 
+
+******
+
+## Question C
+
+Now estimate the effect of the minimum wage increase on starting wages in those restaurants in New Jersey that were minimally affected by the law (those restaurants already paying \$5.00 per hour or above as their starting wage in the pre-treatment period). Provide a 95\% confidence interval and compare your result to the findings from Questions 1 and 2. Discuss what this result tells us about the validity of the difference-in-differences identification strategy used by Card and Krueger (Hint: What sort of diagnostic strategy is this?)
+
+******
+```{r}
+# drop all observations where restaurants in New Jersey weren't minimally affected by the law
+minwage4 <- minwage2[!(minwage2$WAGE_ST < 5 & minwage2$STATE == 1),]
+minwage4$CHANGE <- minwage4$WAGE_ST2 - minwage4$WAGE_ST
+
+# get the DiD estimate
+lm_robust(CHANGE ~ STATE, data = minwage4)
+```
+The estimate of the effect is 0.034 dollars per hour; and the 95\% confidence intervals is [-0.073, 0.141]. We would fail to reject the null of no treatment effect. The estimate is a lot smaller than from both Question A and B. This is because there is no incentive for those restaurants to raise their minimum wage anymore since it's already abiding the law. 
+
+******
+
+## Question D
+
+Estimate the average effect of the New Jersey minimum wage increase on the average price of a regular meal (the combination of an entree, small fries and a medium soda) using a difference-in-differences design. For the purposes of this problem, drop any observations with missing data. Report a 95\% confidence interval and interpret your results. 
+
+******
+```{r}
+# drop observations with missing data
+minwage6 <- subset(minwage, !is.na(WAGE_ST) & !is.na(WAGE_ST2) & !is.na(EMPFT) 
+                   & !is.na(EMPFT2) & !is.na(PSODA) & !is.na(PSODA2) & !is.na(PFRY)
+                   & !is.na(PENTREE) & !is.na(PENTREE2) & !is.na(PFRY2))
+
+# Create a variable for the combination of a regular meal
+minwage6$meal <- minwage6$PFRY2 + minwage6$PENTREE2 + minwage6$PSODA2 - minwage6$PENTREE - minwage6$PSODA - minwage6$PFRY
+
+# get the DiD estimate
+lm_robust(meal ~ STATE, data = minwage6)
+```
+The estimate of the average effect of the New Jersey minimum wage increase on the average price of a regular meal is 0.111 dollars; and the 95\% confidence intervals is [0.018, 0.203]. We would reject the null of no treatment effect. This shows us that by raising the minimum wage, the average price of a meal was also impacted and increased by 0.11 dollars. 
+
+******
+
+## Question E
+
+We will now return to the effect of the minimum wage law on full time employment, the main focus of the Card/Krueger paper.
+
+We are concerned about potential violations of the parallel trends assumption. One way of addressing this is to adjust directly for pre-treatment covariates that differ between Pennsylvania and New Jersey and may account for differential trends. We may, for example, be concerned that some restaurant chains are overrepresented in the New Jersey sample relative to Pennsylvania and may exhibit differential trends over time. 
+
+Matching is one approach to addressing this problem. Use exact matching to adjust for the type of chain and estimate the ATT of the minimum wage increase on the change in full time employment from wave 1 to wave 2. Report a 95\% asymptotic confidence interval using the Abadie-Imbens standard error. Compare your results to the unadjusted difference-in-differences estimate. Lastly, conduct a balance test for your matching solution and discuss the pre-matching imbalance between New Jersey/Pennsylvania and whether matching was successful in reducing that imbalance.
+
+Hint: The `exact=T` option in the `Match()` function in the `Matching` package will use all valid exact matches for each treated unit. 
+
+******
+```{r}
+# before matching / unadjusted
+lm_robust(CHANGE ~ STATE, data = minwage2)
+
+exact_match <- Match(Y = minwage2$CHANGE, Tr = minwage2$STATE,
+                     X = minwage2[, c('CHAIN')],
+                     M = 1, exact = T, ties = T, estimand = 'ATT', Weight = 2)
+summary(exact_match)
+
+# 95% confidence interval
+exact_match_CI <- c(exact_match$est - qnorm(.975)*exact_match$se, exact_match$est + qnorm(.975)*exact_match$se)
+exact_match_CI
+
+# use the MatchBaance function to diagnose the balance
+balance_match <- MatchBalance(STATE ~ CHAIN, data = minwage2, match.out = exact_match)
+
+```
+Using exact matching, we estimate an ATT of the minimum wage increase of 0.519, with a standard error of 0.048. This corresponds to a 95\% CI of [0.426, 0.612]. We would reject the null of no treatment effect. Compared to before matching / unadjusted data, the estimate is larger and there is a bigger effect. Using a balance test, we can see that the standard mean difference has dropped to 0 after matching. I would argue it was pretty successful. 
+
+******
+
