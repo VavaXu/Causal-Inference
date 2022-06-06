@@ -1,0 +1,480 @@
+---
+title: 'DS-UA 201: Problem Set 3'
+author: "Vanessa (Ziwei) Xu"
+date: "November 24, 2020"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Useful R packages
+library(tidyverse)
+library(haven)
+library(estimatr)
+library(Matching)
+```
+
+> This problem set is due at **11:59 pm on Tuesday, November 24th**. The data are on the course website. 
+
+> Please upload your solutions as a .pdf file saved as `Yourlastname_Yourfirstinitial_pset3.pdf`). In addition, an electronic copy of your .Rmd file (saved as `Yourlastname_Yourfirstinitial_pset3.Rmd`) must be submitted to the course website at the same time. We should be able to run your code without error messages. Please note on your problem set if you collaborated with another student and, if so, whom. In order to receive credit, homework submissions must be substantially started and all work must be shown. Late assignments will not be accepted.
+
+# Problem 1
+
+In new democracies and post-conflict settings, Truth and Reconciliation Commissions (TRCs) are often tasked with investigating and reporting about wrongdoing in previous governments. Depending on the context, institutions such as TRCs are expected to reduce conflict (e.g. racial hostilities) and promote peace. 
+
+In 1995, South Africa's new government formed a national TRC in the aftermath of apartheid. [Gibson 2004](https://pages.wustl.edu/files/pages/imce/jlgibson/ajps2004.pdf) uses survey data collected from 2000-2001 to examine whether this TRC promoted inter-racial reconciliation. The outcome of interest is respondent racial attitudes (as measured by the level of agreement with the prompt: "I find it difficult to understand the customs and ways of [the opposite racial group]".) The treatment is "exposure to the TRC" as measured by the individual's level of self-reported knowledge about the TRC. 
+
+You will need to use the `trc_data.dta` file for this question. The relevant variables are:
+
+- `RUSTAND` - Outcome: respondent's racial attitudes (higher values indicate greater agreement)
+
+- `TRCKNOW` - Treatment dummy (1 = if knows about the TRC, 0 = otherwise)
+
+- `age` - Respondent age (in 2001)
+
+- `female` - Respondent gender
+
+- `wealth` - Measure of wealth constructed based on asset ownership (assets are fridge, floor polisher, vacuum cleaner, microwave oven, hi-fi, washing machine, telephone, TV, car)
+
+- `religiosity` - Self-reported religiosity (7 point scale)
+
+- `ethsalience` - Self-reported ethnic identification (4 point scale)
+
+- `rcblack` - Respondent is black
+
+- `rcwhite` - Respondent is white
+
+- `rccol` - Respondent is coloured (distinct multiracial ethnic group)
+
+- `EDUC` - Level of education (9 point scale)
+
+## Part A
+
+Estimate the average treatment effect of TRC exposure on respondents' racial attitudes under the assumption that TRC exposure is completely ignorable. Report a 95\% confidence interval for your estimate and interpret your results.
+
+******
+
+```{r}
+# first, load in the dataset
+trc <- read_dta("trc_data.dta")
+
+# compute the results using the lm_robust function
+lm_robust(RUSTAND ~ TRCKNOW, data = trc)
+```
+On average, people who had been exposed to TRC reduced respondent's racial attitudes by (21.77\%). The 95\% confidence interval for this estimate is [-0.3047, -0.1308]. Since this confidence level does not include zero, we would reject the null of no average treatment effect at $\alpha = .05$.
+
+******
+
+## Part B
+
+Examine whether exposed and nonexposed respondents differ on the full set of observed covariates using a series of balance tests.
+In which ways do exposed and nonexposed respondents differ? What does this tell you about whether the assumption that TRC exposure is completely ignorable is reasonable?
+
+******
+
+```{r}
+# use a balance table to see the difference between exposed and nonexposed
+balance_table <- trc %>% group_by(TRCKNOW) %>% summarize( age = mean(age), female = mean(female), 
+                                                          wealth = mean(wealth), 
+                                                          religiosity = mean(religiosity), 
+                                                          ethsalience = mean(ethsalience), 
+                                                          black = mean(rcblack), 
+                                                          white = mean(rcwhite), 
+                                                          color = mean(rccol), 
+                                                          education = mean(EDUC), .groups="keep")
+balance_table
+```
+We can conclude from the results generated from the balance table that there are significant differences between the control and treamtment groups including but not limited to age, race, and wealth. Thus, the assumption that TRC exposure is completely ignorable do not hold. 
+
+******
+
+## Part C
+
+Now assume that TRC exposure is conditionally ignorable given the set of observed covariates. Use an additive logistic regression model to estimate the propensity score for each observation. With this model, construct inverse propensity of treatment weights (IPTW) for each observation and compute a point estimate for the ATE.
+
+******
+
+```{r}
+# first, build the propensity score model
+pscore_model <- glm(TRCKNOW ~ age + female + wealth + religiosity + ethsalience + rcblack + rcwhite + rccol + EDUC, data = trc, family = binomial(link = "logit"))
+
+tidy(pscore_model)
+
+# then, get the propensity scores for each observation
+trc$e <- predict(pscore_model, type = "response")
+
+# generate the stabilized weights
+trc$stb_wt <- NA
+trc$stb_wt[trc$TRCKNOW == 1] <- mean(trc$TRCKNOW == 1) / trc$e[trc$TRCKNOW == 1]
+trc$stb_wt[trc$TRCKNOW == 0] <- mean(trc$TRCKNOW == 0) / (1 - trc$e[trc$TRCKNOW == 0])
+
+trc$stb_wt <- (mean(trc$TRCKNOW==1) / trc$e) * trc$TRCKNOW + 
+  (mean(trc$TRCKNOW == 0) / (1 - trc$e)) * (1 - trc$TRCKNOW)
+
+# lastly, compute the point estimate for the ATE
+point_wt <- lm_robust(RUSTAND ~ TRCKNOW, data = trc, weights = w)$coef[2]
+
+point_wt
+```
+The point estimate for the ATE is -0.1631. 
+
+******
+
+## Part D
+
+Using a pairs bootstrap (resampling individual rows of the data with replacement), obtain estimate for the standard error of your IPTW estimator for the ATE. Compute a 95\% confidence interval and interpret your findings. Compare your results in Parts C/D to your estimate from Part A and discuss.
+
+******
+
+```{r}
+# bootstrap for the SE
+set.seed(10003)
+nBoot <- 1000 # Number of iterations
+ate_boot <- rep(NA, nBoot) # Placeholder to store estimates
+
+# For each iteration
+for(boot in 1:nBoot){
+  
+  # Resample rows with replacement
+  trc_boot <- trc[sample(1:nrow(trc), nrow(trc), replace=T),]
+  
+  # Fit the propensity score model on the bootstrapped data
+  pscore_model_boot <- glm(TRCKNOW ~ age + female + wealth + religiosity + ethsalience + rcblack + rcwhite + 
+                             rccol + EDUC, data=trc_boot, family=binomial(link="logit")) 
+  
+  # Save the propensities
+  trc_boot$e <- predict(pscore_model_boot, type = "response")
+  
+  # Calculate the (stabilized) weights
+  trc_boot$stb_wt <- (mean(trc_boot$TRCKNOW==1)/trc_boot$e) * trc_boot$TRCKNOW + (mean(trc_boot$TRCKNOW==0)/(1 - trc_boot$e)) * (1 - trc_boot$TRCKNOW)
+  
+  # Store the weighted difference-in-means
+  ate_boot[boot] <- weighted.mean(trc_boot$RUSTAND[trc_boot$TRCKNOW == 1], trc_boot$stb_wt[trc_boot$TRCKNOW == 1]) -
+  weighted.mean(trc_boot$RUSTAND[trc_boot$TRCKNOW == 0], trc_boot$stb_wt[trc_boot$TRCKNOW == 0])
+}
+
+# Take the SD of the ate_boot to get our estimated SE
+sd(ate_boot)
+
+# Asymptotic 95\% CI
+c(point_wt - qnorm(.975) * sd(ate_boot), point_wt + qnorm(.975) * sd(ate_boot))
+
+```
+The results from the Bootstrap shows that the standard error is 0.0447, which is slightly higher than what we got from Part A, and the 95\% confidence interval is [-0.2508, -0.0754]. These results show us that the influence of exposure to TRC is not as significant as Part A shows.
+
+******
+
+## Part E
+
+Now, instead of weighting, we will consider stratification on the propensity score directly.
+
+Based on its estimated propensity score, assign each observation to one of six equally-sized strata (bins). Examine the stratum with the highest propensity scores and, within that stratum, carry out a series of balance tests between exposed and nonexposed respondents for the full set of observed covariates. How does the balance within this particular stratum compare to the overall balance you found in part B? 
+
+******
+
+```{r}
+# create six equally sized stratums
+trc_stratum <- trc %>% mutate(stratum = case_when(e <= quantile(trc$e, c(0,1/6))[2] ~ 1, 
+                                                  e > quantile(trc$e,c(1/6,2/6))[1] & 
+                                                    e <= quantile(trc$e, c(1/6,2/6))[2] ~ 2, 
+                                                  e > quantile(trc$e, c(2/6,3/6))[1] & 
+                                                    e <= quantile(trc$e, c(2/6,3/6))[2] ~ 3, 
+                                                  e > quantile(trc$e, c(3/6,4/6))[1] & 
+                                                    e <= quantile(trc$e, c(3/6,4/6))[2] ~ 4, 
+                                                  e > quantile(trc$e, c(4/6,5/6))[1] & 
+                                                    e <= quantile(trc$e, c(4/6,5/6))[2] ~ 5, 
+                                                  e > quantile(trc$e, c(5/6,6/6))[1] & 
+                                                    e <= quantile(trc$e, c(5/6,6/6))[2] ~ 6))
+
+# balance tests between exposed and nonexposed respondents for the full set of observed covariates
+trc_stratum[trc_stratum$stratum == 6,] %>% group_by(TRCKNOW) %>% summarize(age = mean(age),
+                                                                            female = mean(female),
+                                                                            wealth = mean(wealth), 
+                                                                            religiosity = mean(religiosity), 
+                                                                            ethsalience = mean(ethsalience),
+                                                                            black = mean(rcblack), 
+                                                                            white = mean(rcwhite), 
+                                                                            color = mean(rccol),
+                                                                            educ = mean(EDUC), .groups = 'keep')
+
+```
+In this stratum, the difference between control and treated groups are generally smaller than the results from Part B. Therefore, results are more balanced in the case of stratification rather than weighting. 
+
+******
+
+## Part F
+
+Estimate the average treatment effect using a stratified difference-in-means estimator based on your strata from Part E. Using a pairs bootstrap, obtain an estimate of the standard error of this point estimate and compute a 95\% confidence interval. Compare your results using stratification on the propensity score to the results you obtained using IPTW in Part D. 
+
+Hint: Each iteration of your bootstrap procedure should estimate the propensity scores using that iteration's resampled dataset, stratify the resampled observations based on the estimated propensity score into six equally-sized strata, and then generate a stratified difference-in-means estimate based on the resampled dataset.
+
+******
+
+```{r}
+# first, create the diff_in_means function
+diff_in_means <- function(treated, control){
+  # Point Estimate
+  point <- mean(treated) - mean(control)
+  
+  # Standard Error
+  se <- sqrt(var(treated)/length(treated) + var(control)/length(control))
+  
+  # Asymptotic 95% CI
+  ci_95 <- c(point - qnorm(.975)*se,
+             point + qnorm(.975)*se)
+  
+  # P-value 
+  pval <- 2*pnorm(-abs(point/se))
+
+  # Return as a data frame
+  output <- data.frame(meanTreated = mean(treated), meanControl = mean(control), est = point, se = se, ci95Lower = ci_95[1], ci95Upper = ci_95[2], pvalue = pval, N= length(treated) + length(control))
+  
+  return(as_tibble(output))
+
+}
+
+# next, create the strat_diff_in_means function
+strat_diff_in_means <- function(outcome, treatment, stratum){ 
+  
+  # For each stratum
+  strat_ests <- bind_rows(map(unique(stratum), function(x) diff_in_means(outcome[treatment == 1&stratum == x], outcome[treatment==0&stratum == x])))
+  
+  # Normalize weights to sum to 1
+  strat_ests$weight <- strat_ests$N/sum(strat_ests$N) 
+  
+  # Point estimate
+  point = sum(strat_ests$est*strat_ests$weight) 
+  
+  # Standard error
+  se = sqrt(sum(strat_ests$se^2*strat_ests$weight^2))
+  
+  # Asymptotic 95% CI
+  ci_95 <- c(point - qnorm(.975)*se, point + qnorm(.975)*se)
+  
+  # P-value
+  pval <- 2*pnorm(-abs(point/se)) 
+  
+  # Return as a data frame
+  output <- data.frame(est = point, se = se, ci95Lower = ci_95[1], ci95Upper = ci_95[2], 
+                       pvalue = pval, N= length(outcome))
+  
+  return(as_tibble(output))
+}
+
+# then, start pairs bootstrap for stratification 
+set.seed(10003)
+nBoot <- 1000 # Number of iterations
+ate_boot_strat <- rep(NA, nBoot) # Placeholder to store estimates
+
+# For each iteration
+for(boot in 1:nBoot){
+  
+  # Resample rows with replacement
+  trc_boot <- trc[sample(1:nrow(trc), nrow(trc), replace=T),]
+  
+  # Fit the propensity score model on the bootstrapped data
+  trc_model_boot <- glm(TRCKNOW ~ age + female + wealth + religiosity + ethsalience + rcblack + rcwhite + rccol + EDUC, 
+                        data=trc_boot, family=binomial(link="logit")) 
+  # Save the propensities
+  trc_boot$e <- predict(pscore_model_boot, type = "response")
+  
+  # stratify the resampled observations into six equally sized stratums 
+  trc_stratum_boot <- trc_boot %>% mutate(stratum = case_when(e <= quantile(trc$e, c(0,1/6))[2] ~ 1, 
+                                                    e > quantile(trc$e,c(1/6,2/6))[1] & 
+                                                      e <= quantile(trc$e, c(1/6,2/6))[2] ~ 2, 
+                                                    e > quantile(trc$e, c(2/6,3/6))[1] & 
+                                                      e <= quantile(trc$e, c(2/6,3/6))[2] ~ 3, 
+                                                    e > quantile(trc$e, c(3/6,4/6))[1] & 
+                                                      e <= quantile(trc$e, c(3/6,4/6))[2] ~ 4, 
+                                                    e > quantile(trc$e, c(4/6,5/6))[1] & 
+                                                      e <= quantile(trc$e, c(4/6,5/6))[2] ~ 5, 
+                                                    e > quantile(trc$e, c(5/6,6/6))[1] & 
+                                                      e <= quantile(trc$e, c(5/6,6/6))[2] ~ 6))
+  
+  ate_boot_strat[boot] <- strat_diff_in_means(trc_stratum_boot$RUSTAND, trc_stratum_boot$TRCKNOW,
+                                              trc_stratum_boot$stratum)$est[1]
+  
+}
+
+# Take the SD of the ate_boot_strat to get our estimated stratified SE
+sd(ate_boot_strat)  
+
+# point estimate for the strat_diff_in_means
+pe_strat <- strat_diff_in_means(trc_stratum$RUSTAND, trc_stratum$TRCKNOW, trc_stratum$stratum)$est[1]
+pe_strat
+
+# Asymptotic 95\% CI
+c(pe_strat - qnorm(.975)*sd(ate_boot), pe_strat + qnorm(.975)*sd(ate_boot))
+```
+The point estimate for the stratified difference-in-means estimator is -0.1760. The estimate of the standard error is 0.0436 and the 95\% confidence interval is [-0.2637, -0.0883]. The results using stratification is pretty similar compared to the results obtained using IPTW in Part D, yet shows a little bigger influence of the treatment on the outcome. 
+
+******
+
+# Problem 2
+
+In the 1970s, the federal government instituted a fully randomized evaluation of the National Supported Work Demonstration, a subsidized work program. This allows us to investigate the efficacy of various matching methods by constructing non-experimental control units using respondent data from the Population Survey fo Income Dynamics (PSID) and comparing estimates from the non-experimental data to the experimental benchmark. You will need two datasets. The experimental data is `nsw_exper.dta`. The observational data is `nsw_psid_withtreated.dta.` The variables of interest are:
+
+- `re78` -  Outcome: Real (inflation adjusted) earnings for 1978
+- `nsw` -  Treatment (1 for NSW participants, 0 otherwise)
+- `age` -  Age in years
+- `educ` -  Years of education
+- `black` -  Respondent is African American
+- `hisp` -  Respondent is Hispanic
+- `married` -  Respondent is married
+- `re74` -  Real (inflation adjusted) earnings for 1974
+- `re75` -  Real (inflation adjusted) earnings for 1975
+- `u74` -  Respondent was unmployed in 1974
+- `u75` -  Respondent was unmployed in 1975
+
+
+## Part A
+
+Use the experimental data (where treatment is ingorable) to estimate the ATE of assignment to the jobs training program on 1978 earnings. Report the standard error of this estimate and the 95% confidence interval. 
+
+******
+
+```{r}
+# first, read in both datasets
+experimental <- read_dta("nsw_exper.dta") 
+observational <- read_dta("nsw_psid_withtreated.dta")
+
+# compute the results using the lm_robust function
+lm_robust(re78 ~ nsw, data = experimental)
+```
+The ATE of assignment to the jobs training program on 1978 earnings 1794.343. The standard error of this estimate is 670.9967 and the 95\% confidence interval is [475.6108, 3113.075]. 
+******
+
+## Part B
+
+Using the observational data, calculate the naive difference-in-means estimate of the ATE of assignment to jobs training assuming complete ignorability. Report the standard error and 95% confidence interval. Compare this result to your estimate in part A and discuss why they might differ?
+
+******
+
+```{r}
+# compute the results using the lm_robust function
+lm_robust(re78 ~ nsw, data = observational)
+```
+The ATE of assignment to the jobs training program on 1978 earnings -15204.78. The standard error of this estimate is 657.0765 and the 95\% confidence interval is [-16493.21, -13916.35]. The difference from our answer in Part A is drastically different. This is probably caused by controlled variables in the experimental study. 
+
+******
+
+## Part C
+
+Use the observational data to perform a balance test using the full set of control variables. In which ways do participants and nonparticipants in the jobs training program differ in the observational data? 
+
+******
+
+```{r}
+# create the balabce test
+balance_table <- observational %>% group_by(nsw) %>% summarize(age = mean(age), 
+                                                         education = mean(educ), 
+                                                         black = mean(black), 
+                                                         hisp = mean(hisp), 
+                                                         married = mean(married), 
+                                                         re74 = mean(re74),
+                                                         re75 = mean(re75), 
+                                                         u74 = mean(u74), 
+                                                         u75 = mean(u75), .groups="keep")
+
+balance_table
+```
+From the balance table generated above, we can see that participants and nonparticipants in the jobs training program differ in many areas. For example, participants are generally younger, have fewer years of education, more likely to be black, less likely to be married than nonparticipants.
+
+******
+
+## Part D
+
+We will now explore different adjustment methods to try to recover the experimental benchmark from the observational data. First, we'll try exact matching on the five binary covariates: `black`,`hisp`,`married`,`u74`,`u75`.
+
+Use exact matching on these covariates to estimate the Average Treatment Effect on the Treated (ATT) of assignment to the jobs program. Report the standard error and provide a 95% confidence interval for your estimate. Compare it to your estimate from Part B and the benchmark from Part A. 
+
+******
+
+```{r}
+# create the function for exact matching
+exact_match <- Match(Y = observational$re78, Tr = observational$nsw,
+                     X = observational[, c('black','hisp','married','u74','u75')],
+                     M = 1, exact = T, ties = T, estimand = 'ATT', Weight = 2)
+
+summary(exact_match)
+
+```
+The ATT of assignment to the jobs training program on earnings is 487.87, the standard error of this estimate is 1556.7. This result shows a higher standard error than in Part A and B, and the estimate is smaller than Part A and bigger than Part B. However, the 95\% confidence interval is [−2563, 3539] which covers 0 and it means we would fail to reject the null of no treatment effect. 
+
+******
+
+## Part E
+
+Now we will consider using inexact matching with the full set of covariates, including the continuous covariates. Using 1-to-1 Mahalanobis distance matching (without a bias correction), estimate the ATT of assignment to the jobs program. Report the standard error and provide a 95% asymptotic confidence interval for your estimate. Compare your results to the previous estimates.
+
+******
+
+```{r}
+# create the function for inexact matching
+inexact_match <- Match(Y = observational$re78, Tr = observational$nsw,
+                     X = observational[, c('age','educ','black','hisp','married', 
+                                           're74','re75','u74','u75')],
+                     M = 1, exact = F, ties = T, estimand = 'ATT', Weight = 2)
+
+summary(inexact_match)
+```
+The ATT of assignment to the jobs training program on earnings is 2314.3, the standard error of this estimate is 1726.4. This result has a even higher standard error and higher estimate than exact matching. The 95\% confidence interval still covers 0 and we would fail to reject the null of no treatment effect. 
+
+******
+
+## Part F
+
+Instead of 1-to-1 matching, consider using $M=3$ matches per treated unit instead. Estimate the ATT using 1-to-3 Mahalanobis distance matching (without a bias correction). Report the standard error, provide a 95% asymptotic confidence interval for your estimate and compare your results to Part E - explain why they might differ (if they do).
+
+******
+
+```{r}
+# create the function for 1-to-3 matching
+onetothree_match <- Match(Y = observational$re78, Tr = observational$nsw,
+                     X = observational[, c('age','educ','black','hisp','married', 
+                                           're74','re75','u74','u75')],
+                     M = 3, exact = F, ties = T, estimand = 'ATT', Weight = 2)
+
+summary(onetothree_match)
+```
+The ATT of assignment to the jobs training program on earnings is 1490.4, the standard error of this estimate is 1484. This result has a lower standard error than the 1-to-1 matching and the estimate is lower as well. The 95\% confidence interval still covers 0 and we would fail to reject the null of no treatment effect. 
+
+******
+
+## Part G
+
+Conduct a balance test for the matched set you generated in Part F. Discuss how well the matching procedure reduced imbalance relative to the unmatched data. For which covariates is there still some notable imbalance in the matched data?
+
+******
+
+```{r}
+# use the MatchBaance function to diagnose the balance
+balance_match <- MatchBalance(nsw ~ age + educ + black + hisp + married + re74 + 
+                                re75 + u74 + u75, data = observational, match.out = onetothree_match)
+
+```
+It looks like matching has reduced a lot of imbalance. However, matching didn't seem to have an impact on the treated means for the covariates. 
+
+******
+
+## Part H
+
+Now incorporate the Abadie-Imbens bias correction into your 1-to-3 matching procedure from Part F. Estimate the ATT, report the standard error, provide a 95% confidence interval and compare your results both to your uncorrected estimate from Part F and the experimental benchmark from Part A. Discuss how well matching on the observational data is able to recover the benchmark estimate from the experimental data.
+
+******
+
+```{r}
+# matching with a bias correction
+onetothree_match_bc <- Match(Y = observational$re78, Tr = observational$nsw, 
+                       X = observational[, c('age','educ','black','hisp','married','re74','re75','u74','u75')], 
+                       M = 3, exact = F, ties = T, BiasAdjust = TRUE, estimand = 'ATT', Weight = 2) 
+
+summary(onetothree_match_bc)
+```
+The ATT of assignment to the jobs training program on earnings is 2505.4, the standard error of this estimate is 1439.1. This result has a slightly lower standard error than Part F after bias corrected matching and the estimate is higher. However, the estimate is lower than Part A and the standard error is significantly higher. The 95\% confidence interval is [−315, 5326] which means we would fail to reject the null of no treatment effect (opposite from our result in Part A). 
+
+******
