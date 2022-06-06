@@ -1,0 +1,368 @@
+---
+title: 'DS-UA 201: Problem Set 2'
+author: "Ziwei Xu (Vanessa)"
+date: "October 13, 2020"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Useful R packages
+library(tidyverse)
+library(haven)
+library(plyr)
+```
+
+> This problem set is due at **11:59 pm on Tuesday, October 13th**. The data are on the course website. 
+
+> Please upload your solutions as a .pdf file saved as `Yourlastname_Yourfirstinitial_pset2.pdf`). In addition, an electronic copy of your .Rmd file (saved as `Yourlastname_Yourfirstinitial_pset2.Rmd`) must be submitted to the course website at the same time. We should be able to run your code without error messages. Please note on your problem set if you collaborated with another student and, if so, whom. In order to receive credit, homework submissions must be substantially started and all work must be shown. Late assignments will not be accepted.
+
+# Problem 1
+
+Do international election monitors reduce the incidence of electoral fraud? [Hyde (2007)](https://www.aeaweb.org/articles?id=10.1257/000282803321946921) studies the 2003 presidential election in Armenia, an election that took place during a period where the incumbent ruling party headed by President Robert Kocharian had consolidated power and often behaved in ways that were considered undemocratic.
+
+The full citation for this paper is
+
+> Hyde, Susan D. "The observer effect in international politics: Evidence from a natural experiment." *World Politics* 60.1 (2007): 37-63.
+
+At the time of the election, OSCE/ODIHR election monitors reported widespread electoral irregularities that favored the incumbent party such as ballot-box stuffing (pp. 47). However, we do not necessarily know whether these irregularities would have been worse in the absence of monitors. Notably, not all polling stations were monitored -- the OSCE/ODIHR mission could only send observers to some of the polling stations in the country. Since in the context of this election only the incumbent party would have the capacity to carry out significant election fraud, Hyde examines whether the presence of election observers from the OSCE/ODIHR mission at polling stations in Armenia reduced the incumbent party's vote share at that polling station.
+
+For the purposes of this problem, you will be using the `armenia2003.dta` dataset
+
+The R code below will read in this data (which is stored in the STATA .dta format)
+```{r, echo=T, message=F}
+library(tidyverse)
+library(haven)
+
+### Hyde (2007) Armenia dataset
+armenia <- read_dta("armenia2003.dta")
+```
+
+This dataset consists of 1764 observations polling-station-level election results from the 2003 Armenia election made available by the Armenian Central Election Commission. The election took place over two rounds with an initial round having a large number of candidates and a second, run-off election, between Kocharian and the second-place vote-getter, Karen Demirchyan. We will focus on monitoring and voting in the first round.  The specific columns you will need are:
+
+- `kocharian` - Round 1 vote share for the incumbent (Kocharian)
+- `mon_voting` - Whether the polling station was monitored in round 1 of the election
+- `turnout` - Proportion of registered voters who voted in Round 1
+- `totalvoters` - Total number of registered voters recorded for the polling station
+- `total` - Total number of votes cast in Round 1
+- `urban` - Indicator for whether the polling place was in an urban area (0 = rural, 1 = urban)
+- `nearNagorno` - Indicator for whether the polling place is near the Nagorno-Karabakh region (0 = no, 1 = yes)
+
+## Part A
+
+Hyde describes the study as a "natural experiment," stating: 
+
+> "I learned from conversations with staff and participants in the OSCE observation mission to Armenia that the method used to assign observers to polling stations was functionally equivalent to random assignment. This permits the use of natural experimental design. Although the OSCE/ODIHR mission did not assign observers using a random numbers table or its equivalent, the method would have been highly unlikely to produce a list of assigned polling stations that were systematically different from the polling stations that observers were not assigned to visit. Each team's assigned list was selected arbitrarily from a complete list of polling stations." (p. 48)
+
+What makes this study a "natural experiment" and not a true experiment? What assumption must the study defend in order to identify the causal effect of election monitoring that would be guaranteed to hold in a randomized experiment? What might be some possible reasons why that assumption might not hold in this design?
+
+******
+The study is not a true experiment, because the monitored polling stations were not truly chosen randomly.  
+This would be important, because then the null hypothesis would be that the parameterized distributions of relative votes for the incumbent candidate are the same for the monitored as well as the unmonitored polling stations.  The null hypothesis means that there is no evidence for difference in cheating in the vote ratios for monitored vs unmonitored polling stations.  It would be a natural experiment if the distribution of monitoring points is near-representative for the vote ratios distribution over the polling stations.  
+The most critical part in the argument is that the monitoring stations may not have been chosen to avoid high opposition votes, because that would leave more room for cheating in these polling stations to be insignificant, because the monitored stations do have a higher voting ratio for the incumbent candidate anyway.
+
+******
+## Part B
+
+For the purposes of this part, assume election monitors were assigned as the author describes - in a manner "functionally equivalent to random assignment." Using the difference-in-means estimator, estimate the average treatment effect of election monitoring on incumbent vote share in round 1. Provide a 95\% asymptotic confidence interval and interpret your results. Can we reject the null of no average treatment effect at the $\alpha = 0.05$ level? 
+
+******
+So we decided to compute the differences depending on the 2 predictors rural/urban and nearNargorno/farofNargorno.  The 95% confidence intervals are computed as below:
+
+```{r}
+ monitored <- armenia$mon_voting==1
+ unmon <- armenia$mon_voting==0
+ urban <- armenia$urban==1
+ nearNagorno <- armenia$nearNagorno==1
+ 
+samples0un <- armenia[unmon & urban & nearNagorno, ]$kocharian
+samples0uf <- armenia[unmon & urban & !nearNagorno, ]$kocharian
+samples0rn <- armenia[unmon & !urban & nearNagorno, ]$kocharian
+samples0rf <- armenia[unmon & !urban & !nearNagorno, ]$kocharian
+n0 <- c(length(samples0un), length(samples0uf), length(samples0rn), length(samples0rf))
+m0 <- c(mean(samples0un), mean(samples0uf), mean(samples0rn), mean(samples0rf))
+s0 <- c(sd(samples0un), sd(samples0uf), sd(samples0rn), sd(samples0rf))
+
+samples1un <- armenia[monitored & urban & nearNagorno, ]$kocharian
+samples1uf <- armenia[monitored & urban & !nearNagorno, ]$kocharian
+samples1rn <- armenia[monitored & !urban & nearNagorno, ]$kocharian
+samples1rf <- armenia[monitored & !urban & !nearNagorno, ]$kocharian
+
+n1 <- c(length(samples1un), length(samples1uf), length(samples1rn), length(samples0rf))
+m1 <- c(mean(samples1un), mean(samples1uf), mean(samples1rn), mean(samples1rf))
+s1 <- c(sd(samples1un), sd(samples1uf), sd(samples1rn), sd(samples1rf))
+sprintf('unmonitored:\n  {(urban,nearN),(urban,farN),(rual,nearN),(rural,farN)}: count=(%d, %d, %d, %d), means=(%.3f±%.3f, %.3f±%.3f, %.3f±%.3f, %.3f±%.3f)',n0[1],n0[2],n0[3],n0[4], m0[1],m0[2],m0[3],m0[4], s0[1],s0[2],s0[3], s0[4])
+sprintf('monitored:  \n  {(urban,nearN),(urban,farN),(rual,nearN),(rural,farN)}: count=(%d, %d, %d, %d), means=(%.3f±%.3f, %.3f±%.3f, %.3f±%.3f, %.3f±%.3f)',n1[1],n1[2],n1[3],n1[4], m1[1],m1[2],m1[3],m1[4], s1[1],s1[2],s1[3], s1[4])
+
+```
+```{r}
+deltas <- m0 -m1
+sError <- sqrt(s0*s0/n0 +s1*s1/n1)
+DoFun <- (s0*s0/n0+s1*s1/n1)/((s0*s0/n0)^2/(n0-1)+(s1*s1/n1)^2/(n1-1))
+
+mError <- c(qt(0.95, DoFun[1])*sError[1],qnorm(0.95)*sError[2], qt(0.95, DoFun[3])*sError[3],qnorm(0.95)*sError[4])
+sprintf('95%% confidence intervals for {(urban,nearN),(urban,farN),(rural,nearN),(rural,farN)}: (%.3f±%.3f, %.3f±%.3f, %.3f±%.3f, %.3f±%.3f)', deltas[1],mError[1],deltas[2],mError[2], deltas[3],mError[3],deltas[4],mError[4])
+```
+
+So the probabilities are calculated as:
+```{r}
+ probabs <- c(1-pnorm(abs(deltas[1])/mError[1]),1-pnorm(abs(deltas[2])/mError[2]), 1-pnorm(abs(deltas[3])/mError[3]),1-pnorm(abs(deltas[4])/mError[4]))
+print(probabs)
+```
+
+Therefore we are certain that there was an effect of monitoring in urban areas far off Nagorno.  For the other parts we cannot prove anything.
+
+******
+## Part C
+
+Evaluate the author's identification assumptions by examining whether the treatment is balanced on three pre-treatment covariates: the total number of registered voters, whether a polling place was in an urban area, and whether the polling place was located near the Nagorno-Karabakh region (Kocharian's home region and a disputed territory between Armenia and Azerbaijan). Discuss your results. Are they consistent with the author's description of "as-if random" assignment?
+
+```{r}
+
+```
+
+******
+compute 4 probabilities and compare that they are the same with and without monitoring.
+******
+
+## Part D
+
+Divide the sample into five strata based on the total number of registered voters at each polling station (`totalvoters`): 
+
+|Stratum|Total Registered Voters|
+|-------|-----------------------|
+|Tiny| `totalvoters` < 430|
+|Small| 430 $\le$ `totalvoters` < 1192|
+|Medium| 1192 $\le$ `totalvoters` < 1628|
+|Large| 1628 $\le$ `totalvoters` < 1879|
+|Huge | 1879 $\le$ `totalvoters` |
+
+Estimate the average treatment effect of election monitoring in round 1 on incumbent vote share using a stratified difference-in-means estimator, stratifying on the total number of registered voters. Provide a 95\% asymptotic confidence interval and interpret your results. Can we reject the null of no average treatment effect at the $\alpha = 0.05$ level? Compare your answer to your estimate from Part B and discuss any differences you see.
+
+******
+```{r}
+tiny <- armenia$totalvoters<430
+small <- 430<armenia$totalvoters & armenia$totalvoters<1192
+medium <- 1192<armenia$totalvoters & armenia$totalvoters<1628
+large <- 1628<armenia$totalvoters & armenia$totalvoters<1879
+huge <- 1879<armenia$totalvoters
+```
+
+```{r}
+```
+
+
+```{r}
+# Difference-in-means function
+diff_in_means <- function(treated, control, alpha = .05){
+  
+  # Point estimate
+  est <- mean(treated) - mean(control)
+  
+  # Standard error
+  se <- sqrt(var(treated)/length(treated) + 
+               var(control)/length(control))
+  
+  # Confidence interval
+  
+  ci <- c(est - qnorm(1-alpha/2)*se,
+          est + qnorm(1-alpha/2)*se)
+  
+  # P-value
+  pvalue <- 2*pnorm(-abs(est/se))
+  
+  # Output 
+  #out_data = data.frame(est = est, se = se, ci_lower = ci[1], 
+  #                      ci_upper = ci[2], 
+  #                      pval = pvalue, 
+  #                      alpha = alpha)
+  
+  return(c(est, se, pvalue))
+  
+}
+```
+
+```{r}
+un <- armenia[unmon & small, ]$kocharian
+un
+```
+
+
+```{r}
+  # for (stratum in c(tiny, small, medium, large, huge)) {
+    un <- armenia[unmon & tiny, ]$kocharian
+    mon <- armenia[monitored & tiny, ]$kocharian
+    result <- diff_in_means(mon, un)
+    print(sprintf('for tiny towns: ratio = %.3f±%.3f, p=%.3f', result[1], result[2], result[3]))
+    un <- armenia[unmon & small, ]$kocharian
+    mon <- armenia[monitored & small, ]$kocharian
+    result <- diff_in_means(mon, un)
+    print(sprintf('for small towns: ratio = %.3f±%.3f, p=%.3f', result[1], result[2], result[3]))
+    un <- armenia[unmon & medium, ]$kocharian
+    mon <- armenia[monitored & medium, ]$kocharian
+    result <- diff_in_means(mon, un)
+    print(sprintf('for medium towns: ratio = %.3f±%.3f, p=%.3f', result[1], result[2], result[3]))
+    un <- armenia[unmon & large, ]$kocharian
+    mon <- armenia[monitored & large, ]$kocharian
+    result <- diff_in_means(mon, un)
+    print(sprintf('for large towns: ratio = %.3f±%.3f, p=%.3f', result[1], result[2], result[3]))
+    un <- armenia[unmon & huge, ]$kocharian
+    mon <- armenia[monitored & huge, ]$kocharian
+    result <- diff_in_means(mon, un)
+    print(sprintf('for huge towns: ratio = %.3f±%.3f, p=%.3f', result[1], result[2], result[3]))
+  # }
+```
+With only this stratification it seems that he cheated only in the large towns.
+
+******
+
+## Part E
+
+In Table 4 of the paper, Hyde uses an estimator for the average treatment effect of a polling place receiving election monitors in round 1 on the incumbent's vote share in round 1 *conditional* on the total number of votes cast in the election. Will this approach be unbiased for the average treatment effect of election monitors on the incumbent's vote share if we believe that one of the mechanisms through which election monitoring operates is by reducing the incidence of ballot-stuffing (inflating the number of "cast" votes in the election)?  Why or why not?
+
+******
+No, this approach is unbiased.
+
+******
+
+
+# Problem 2
+Consider an experiment with $N$ units. Each unit $i$ in the sample belongs to one of $G$ mutually exclusive strata. $G_i = g$ denotes that the $i$th unit belongs to stratum $g$. $N_g$ denotes the size of stratum $g$ and $N_{t,g}$ denotes the number of treated units in that stratum. Suppose that treatment is assigned via block-randomization. Within each stratum, $N_{t,g}$ units are randomly selected to receive treatment and the remainder receive control (complete randomization). Suppose also that the proportion of treated units in each stratum, $\frac{N_{t,g}}{N_g}$, varies depending on the stratum. After treatment is assigned, you record an outcome $Y_i$ for each unit in the sample. Assume consistency holds with respect to the potential outcomes: $$Y_i =D_i Y_i(1) + (1-D_i)Y_i(0)$$ 
+
+Let $w(g) = P(D_i = 1 | G_i = g)$ denote the known (constant) probability that unit $i$ would receive treatment if it's stratum membership is $g$.
+
+Instead of using the stratified difference-in-means estimator, your colleague suggests an alternative that assigns a weight to each unit and takes two weighted averages.
+$$
+\hat{\tau}_w = \frac{1}{N}\sum_{i=1}^N \frac{D_i Y_i}{w(G_i)} - \frac{(1 - D_i) Y_i}{1 - w(G_i)}
+$$
+Show that $\hat{\tau}_w$ is unbiased for the average treatment effect $\tau$:
+
+$$
+\tau = E[Y_i(1) - Y_i(0)]
+$$
+Hints:
+
+- For a unit with $G_i = g$, the probability of receiving treatment is $\frac{N_{t,g}}{N_g}$
+- Consider splitting up the sum from $i = 1$ to $N$ to a double-sum over each of the $G$ groups and over the units $i$ in group $G_i = g$ (since the groups are exhaustive and mutually exclusive, you can think of this as partitioning of the set of $i$ observations by their group membership).
+
+
+******
+The proof to this question can be found in the image below:
+![Proof](proof.png)
+*If the image file can not be found, please check the submitted pdf file.*
+
+******
+
+# Problem 3
+
+For this question you will need the `SierraLeone_data.dta` dataset (available on the course website) based on a field experiment conducted by [Casey et al 2012](https://academic.oup.com/qje/article-abstract/127/4/1755/1841616). You will re-analyze this experiment using Fisher's randomization inference.
+
+Aid organizations in developing countries spend billions of dollars every year promoting accountability, competence and inclusion of under-representated groups. Arguably the most popular strategy for these efforts has been community-driven development (CDD) programs. CDD projects are initatives that attempt to bolster local coordination and enhance political participation by providing financial grants for local public goods and small entrepise development.
+
+[Casey et al 2012](https://academic.oup.com/qje/article-abstract/127/4/1755/1841616) explore the effectiveness of a CDD program in post-conflict Sierra Leone. The researchers block-randomized treatment (access to the CDD program) at the village level. That is, within each block (here chiefdoms) consisting of $N_g$ villages, the researchers randomly assigned $N_{t,g}$ villages to receive treatment. Overall, $N_t = 116$ villages received the treatment out of a total of $N = 233$.
+
+```{r}
+# Read in the data
+raw <- read_dta("SierraLeone_data.dta")
+sierraLeone <- raw[complete.cases(raw), ]
+```
+
+The variables you will need are:
+
+- `community_bank` - Whether the village has a community bank by the end of the experiment
+
+- `treat_control` - The village's treatment status
+
+- `chief_2004census` - The census area (chiefdom) at which block randomization was conducted
+
+- `id_vill` - Unique village identifier
+
+
+### Part A
+Estimate the average treatment effect of the CDD program on the probability that a village has a community bank using a stratified difference-in-means estimator (the strata here being chiefdoms).
+
+
+******
+```{r}
+# Difference-in-means function
+diff_in_means <- function(treated, control, alpha = .05){
+  
+  # Point estimate
+  est <- mean(treated) - mean(control)
+  
+  # Standard error
+  se <- sqrt(var(treated)/length(treated) + 
+               var(control)/length(control))
+  
+  # Confidence interval
+  
+  ci <- c(est - qnorm(1-alpha/2)*se,
+          est + qnorm(1-alpha/2)*se)
+  
+  # P-value
+  pvalue <- 2*pnorm(-abs(est/se))
+  
+  # Output 
+  #out_data = data.frame(est = est, se = se, ci_lower = ci[1], 
+  #                      ci_upper = ci[2], 
+  #                      pval = pvalue, 
+  #                      alpha = alpha)
+  
+  return(c(est, se, pvalue))
+  
+}
+```
+
+
+```{r}
+ chiefs <- unique(sierraLeone$chief_2004census)
+ treated <- sierraLeone$treat_control==1
+ for (chief in chiefs) {
+   treated_values = sierraLeone[treated & sierraLeone$chief_2004census==chief,]$community_bank
+   control_values = sierraLeone[!treated & sierraLeone$chief_2004census==chief,]$community_bank
+   if (length(treated_values)>0 && length(control_values)>0) {
+     result <- diff_in_means(treated_values, control_values)
+     print(sprintf('%s: %.3f±%.3f',chief, result[1], result[2]))
+   }else
+     print(sprintf('%s: insufficient data, only %d treatments and %d control values.', chief, length(treated_values), length(control_values)))
+ }
+```
+
+
+******
+
+### Part B
+Let's obtain a p-value under the sharp null of no treatment effect using randomization inference. We'll use the absolute value of the difference-in-means as our test statistic.
+
+Assume $N_{t,g}$ is fixed for each block and that within each block, the researchers assigned treatment using complete randomization. 
+
+Approximate the randomization distribution of the absolute difference-in-means given the stratified randomization procedure (fixed $N_{t,g}$ for each stratum and complete randomization within each stratum). Use a simulation with 5000 total draws. Set your random seed to $10003$ prior to the start of the simulation. 
+
+Make a histogram of your draws.
+
+
+******
+```{r}
+library(estimatr)
+```
+
+use function `difference_in_means` to sample the described distribution (chiefs as blocks/strata), $N=5000$.
+
+******
+
+
+### Part C
+Calculate a p-value for the observed test statistic under the sharp null of no treatment effects using your randomization distribution from Part B. Interpret your results. Would you reject the null at the $\alpha = .05$ level?
+
+
+******
+```{r}
+```
+use `diff_in_mean` analogous to Part A.
+
+******
+
